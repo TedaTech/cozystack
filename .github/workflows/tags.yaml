@@ -12,6 +12,9 @@ concurrency:
   group: tags-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  REGISTRY: ghcr.io/tedatech/cozystack
+
 jobs:
   prepare-release:
     name: Prepare Release
@@ -96,8 +99,8 @@ jobs:
         if: steps.check_release.outputs.skip == 'false'
         uses: docker/login-action@v3
         with:
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_PAT }}
           registry: ghcr.io
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/.docker
@@ -115,9 +118,9 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config user.name  "cozystack-bot"
-          git config user.email "217169706+cozystack-bot@users.noreply.github.com"
-          git remote set-url origin https://cozystack-bot:${GH_PAT}@github.com/${GITHUB_REPOSITORY}
+          git config user.name  "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/${GITHUB_REPOSITORY}
           git config --unset-all http.https://github.com/.extraheader || true
           git add .
           git commit -m "Prepare release ${GITHUB_REF#refs/tags/}" -s || echo "No changes to commit"
@@ -129,6 +132,7 @@ jobs:
         id: release
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GH_PAT }}
           script: |
             const tag      = '${{ steps.tag.outputs.tag }}';
             const isRc     = ${{ steps.tag.outputs.is_rc }};
@@ -161,7 +165,7 @@ jobs:
           make assets
           make upload_assets VERSION=${{ steps.tag.outputs.tag }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       # Create release-X.Y.Z branch and push (force-update)
       - name: Create release branch
@@ -169,9 +173,9 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config user.name  "cozystack-bot"
-          git config user.email "217169706+cozystack-bot@users.noreply.github.com"
-          git remote set-url origin https://cozystack-bot:${GH_PAT}@github.com/${GITHUB_REPOSITORY}
+          git config user.name  "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/${GITHUB_REPOSITORY}
           BRANCH="release-${GITHUB_REF#refs/tags/v}"
           git branch -f "$BRANCH"
           git push -f origin "$BRANCH"
@@ -221,7 +225,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    if: needs.prepare-release.result == 'success'
+    # Internal TedaTech releases keep upstream's tag-based release flow, but do
+    # not require the upstream Copilot changelog automation to publish images.
+    if: ${{ false }}
     steps:
       - name: Parse tag
         id: tag

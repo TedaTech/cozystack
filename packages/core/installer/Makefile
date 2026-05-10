@@ -34,7 +34,7 @@ image-packages:
 	flux push artifact \
 		oci://$(REGISTRY)/cozystack-packages:$(call settag,$(TAG)) \
 		--path=../../../packages \
-		--source=https://github.com/cozystack/cozystack \
+		--source=https://github.com/TedaTech/cozystack \
 		--revision="$$(git describe --tags):$$(git rev-parse HEAD)" \
 		2>&1 | tee images/cozystack-packages.log
 	export REPO="oci://$(REGISTRY)/cozystack-packages" \
