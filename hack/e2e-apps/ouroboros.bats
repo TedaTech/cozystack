@@ -50,6 +50,22 @@ spec:
       enabled: true
       valuesOverride: {}
   controlPlane:
+    # Diagnostic-only single replica: a previous run on the cozystack default
+    # (replicas: 2) had bats kubectl poll the ConfigMap 1074 times in a row
+    # and never see the rewrite the controller had already written, while
+    # the dump_tenant_state at exit DID see it. Stable miss across 1074
+    # polls is not consistent with kube-proxy round-robin between two
+    # replicas (statistically some polls would have hit the up-to-date
+    # apiserver), so port-forward sticks to one apiserver pod and that pod
+    # has stale storage cache for kube-system/coredns-custom for >15min
+    # past the controller's Update. Confirming via single-replica run: if
+    # this ouroboros-bats path goes green in <1min on replicas=1, the bug
+    # is HA-only and lives somewhere in kamaji apiserver / etcd watch /
+    # cilium kubeProxyReplacement. If it stays red on replicas=1, the
+    # cause is elsewhere and we follow the apiserver logs added to
+    # dump_host_state. This is NOT the long-term test default — once the
+    # underlying platform issue is identified, restore the platform default.
+    replicas: 1
     apiServer:
       resources: {}
       resourcesPreset: small
@@ -100,6 +116,52 @@ EOF
     pkill -f "port-forward.*service/kubernetes-${cluster}.*${pf_port}:" 2>/dev/null || true
     rm -f "${kubeconfig}"
   }
+  # Host-side state dump used on the parent-HR failure path, where the
+  # kubeconfig has not yet been extracted (so dump_tenant_state's
+  # KUBECONFIG-driven calls would all hit an empty/missing file). Tightly
+  # scoped to the resources a kamaji-bringup hang surfaces on:
+  # - the Kubernetes apps.cozystack.io CR (status conditions show what the
+  #   parent helm-controller is waiting on);
+  # - the parent kubernetes-${cluster} HelmRelease (its conditions show
+  #   the chart-render or apply state);
+  # - the Kamaji TenantControlPlane (TCP) — kamaji ships its own status
+  #   conditions when etcd, certs, or konnectivity fail to come up.
+  dump_host_state() {
+    echo "=== ouroboros host-side diagnostics (pre-kubeconfig) ==="
+    echo "--- host: Kubernetes apps.cozystack.io describe ---"
+    kubectl --namespace "${ns}" describe \
+      kuberneteses.apps.cozystack.io "${cluster}" || true
+    echo "--- host: parent HelmRelease describe ---"
+    kubectl --namespace "${ns}" describe \
+      helmrelease "kubernetes-${cluster}" || true
+    echo "--- host: Kamaji TenantControlPlane describe ---"
+    kubectl --namespace "${ns}" describe \
+      tenantcontrolplane.kamaji.clastix.io "kubernetes-${cluster}" || true
+    # Kamaji-managed apiserver pods live in the host ${ns} as a regular
+    # Deployment. cozyreport does NOT collect logs from this namespace by
+    # default (only cozy-* host namespaces), so without this dump there
+    # is no record of the actual kube-apiserver behaviour at the moment
+    # the bats poll loop was reading stale ConfigMap data. Pull pod-list
+    # for replica visibility, then per-pod logs of kube-apiserver +
+    # konnectivity-server (the two containers a kamaji apiserver pod
+    # ships) so a future watch-cache-lag investigation can correlate
+    # bats kubectl `get configmap` timestamps against apiserver
+    # request-handling on each replica.
+    echo "--- host: Kamaji apiserver pods (-o wide) ---"
+    kubectl --namespace "${ns}" get pods \
+      --selector "kamaji.clastix.io/name=kubernetes-${cluster}" \
+      --output wide || true
+    echo "--- host: kube-apiserver logs from each Kamaji replica (tail=400) ---"
+    kubectl --namespace "${ns}" logs \
+      --selector "kamaji.clastix.io/name=kubernetes-${cluster}" \
+      --container kube-apiserver \
+      --tail=400 --prefix=true --all-containers=false || true
+    echo "--- host: konnectivity-server logs from each Kamaji replica (tail=200) ---"
+    kubectl --namespace "${ns}" logs \
+      --selector "kamaji.clastix.io/name=kubernetes-${cluster}" \
+      --container konnectivity-server \
+      --tail=200 --prefix=true --all-containers=false || true
+  }
   # Tenant-side state dump used both on the HR-not-Ready failure path and
   # on every later assertion (rewrite snippet missing, dnscheck pod
   # not Succeeded, etc.). Without one centralised dump every assertion
@@ -108,6 +170,12 @@ EOF
   # non-zero. Wrap each assertion in `if ! ...; then dump_tenant_state;
   # exit 1; fi` so cozytest captures actionable tenant-side state on
   # the failure that triggered the exit, regardless of which one fired.
+  #
+  # Both dump_host_state and dump_tenant_state are intentionally local
+  # to this @test (not setup()-defined) — cozytest.sh does not invoke
+  # bats setup/teardown, and the helpers reference @test-local variables
+  # (cluster, ns, kubeconfig). If a second @test ever lands in this file,
+  # hoist the helpers and parametrise on those variables.
   dump_tenant_state() {
     echo "=== ouroboros tenant-side diagnostics ==="
     echo "--- host: HelmRelease describe ---"
@@ -142,9 +210,16 @@ EOF
       get ingress --output yaml || true
   }
   trap cleanup_kubeconfig EXIT
-  kubectl --namespace "${ns}" wait \
-    helmrelease "kubernetes-${cluster}" \
-    --timeout=15m --for=condition=ready
+  # Wrap parent kubernetes-HR wait in dump_host_state so a Kamaji bringup
+  # wedge does not surface as opaque `wait: timed out`. Tenant-side
+  # diagnostics are unavailable here (no kubeconfig yet); the host-side
+  # dump covers parent HR conditions, the Kubernetes CR, and the TCP.
+  if ! kubectl --namespace "${ns}" wait \
+       helmrelease "kubernetes-${cluster}" \
+       --timeout=25m --for=condition=ready; then
+    dump_host_state
+    exit 1
+  fi
   kubectl --namespace "${ns}" get secret \
     "kubernetes-${cluster}-admin-kubeconfig" \
     --output jsonpath='{.data.super-admin\.conf}' \
@@ -210,7 +285,7 @@ spec:
                   number: 80
 EOF
 
-  deadline=$(( $(date +%s) + 180 ))
+  deadline=$(( $(date +%s) + 900 ))
   snippet=
   while [ "$(date +%s)" -lt "${deadline}" ]; do
     # jsonpath bracket notation tolerates dotted keys AND missing

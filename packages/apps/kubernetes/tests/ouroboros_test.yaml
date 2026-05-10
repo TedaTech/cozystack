@@ -49,6 +49,50 @@ tests:
       - isKind:
           of: HelmRelease
 
+  - it: |
+      INTERIM pins ouroboros.controller.logLevel to debug while we root-cause
+      the kamaji-tenant-via-konnectivity Ingress-event-to-rewrite latency
+      flake (~7-10 minutes from kubectl apply on the tenant apiserver to
+      the controller's coredns-custom rewrite). Debug-level surfaces
+      per-event informer activity (AddFunc/UpdateFunc/DeleteFunc with
+      kind+namespace/name) and reconcile pacing, which is the only way
+      to distinguish 'watch never fires' from 'reconcile silently
+      errors' from 'API list returns empty until reflector reconnect'.
+      To revert once the flake is diagnosed: drop the logLevel debug
+      line in cozystack.defaultOuroborosValues and flip this test's
+      expected value back to info.
+    set:
+      addons:
+        ouroboros:
+          enabled: true
+          valuesOverride: {}
+        ingressNginx:
+          enabled: true
+          hosts: []
+          valuesOverride: {}
+    asserts:
+      - equal:
+          path: spec.values.ouroboros.controller.logLevel
+          value: debug
+
+  - it: lets a tenant-supplied valuesOverride set controller.logLevel explicitly (escape hatch — operators that want quieter logs flip back to info)
+    set:
+      addons:
+        ouroboros:
+          enabled: true
+          valuesOverride:
+            ouroboros:
+              controller:
+                logLevel: info
+        ingressNginx:
+          enabled: true
+          hosts: []
+          valuesOverride: {}
+    asserts:
+      - equal:
+          path: spec.values.ouroboros.controller.logLevel
+          value: info
+
   - it: lets a tenant-supplied valuesOverride set controller.clusterDomain explicitly (escape hatch for non-default tenant cluster-domain)
     set:
       addons:

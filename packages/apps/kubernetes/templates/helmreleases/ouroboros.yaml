@@ -17,6 +17,25 @@ Tenant deployments override the cozy-ouroboros parent defaults:
 ouroboros:
   controller:
     mode: coredns-import
+    {{- /* INTERIM: force debug-level logging on every cozystack tenant
+           deployment until the kamaji-tenant-via-konnectivity Ingress-
+           event-to-rewrite latency flake is root-caused. Bats sees a
+           fresh Ingress create succeed against the tenant apiserver but
+           the controller's coredns-custom rewrite lands ~7-10 minutes
+           later — without per-event informer visibility (AddFunc /
+           UpdateFunc / DeleteFunc with kind+namespace/name) the failure
+           is indistinguishable between "watch never fires", "reconcile
+           silently errors", and "API list returns empty until reflector
+           reconnect". This default exists to collect that diagnostic on
+           every e2e cycle. Once the root cause lands and the test stops
+           hitting the timeout path, this should be reverted to the
+           upstream chart default (info) in a follow-up — debug verbosity
+           is not a sane permanent platform setting per the
+           "default for low-skill operator" stance.
+           Operators on a release that still ships this default and want
+           quieter logs already can override via
+           `addons.ouroboros.valuesOverride.ouroboros.controller.logLevel: info`. */}}
+    logLevel: debug
     gatewayApi:
       enabled: {{ $.Values.addons.gatewayAPI.enabled }}
     {{- /* Pin clusterDomain to cluster.local. cozystack tenants bootstrap
@@ -84,7 +103,7 @@ ouroboros:
        reconciles the parent kubernetes-application chart, sees the
        child HelmRelease has disappeared from the rendered output,
        and runs `helm uninstall` on the tenant. The vendored
-       cozy-ouroboros chart (0.7.0) ships a pre-delete Helm hook
+       cozy-ouroboros chart ships a pre-delete Helm hook
        (charts/ouroboros/templates/coredns-cleanup-hook.yaml) that
        nulls the ouroboros.override data key on the tenant's
        kube-system/coredns-custom ConfigMap before the controller
