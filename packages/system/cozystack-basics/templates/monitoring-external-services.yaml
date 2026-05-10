@@ -1,3 +1,4 @@
+{{- $clusterDomain := (index .Values._cluster "cluster-domain") | default "cluster.local" }}
 ---
 apiVersion: v1
 kind: Service
@@ -6,7 +7,7 @@ metadata:
   namespace: cozy-monitoring
 spec:
   type: ExternalName
-  externalName: vlogs-generic.tenant-root.svc.cluster.local
+  externalName: vlogs-generic.tenant-root.svc.{{ $clusterDomain }}
 ---
 apiVersion: v1
 kind: Service
@@ -15,7 +16,7 @@ metadata:
   namespace: cozy-monitoring
 spec:
   type: ExternalName
-  externalName: vminsert-shortterm.tenant-root.svc.cluster.local
+  externalName: vminsert-shortterm.tenant-root.svc.{{ $clusterDomain }}
 ---
 apiVersion: v1
 kind: Service
@@ -24,4 +25,4 @@ metadata:
   namespace: cozy-monitoring
 spec:
   type: ExternalName
-  externalName: vminsert-longterm.tenant-root.svc.cluster.local
+  externalName: vminsert-longterm.tenant-root.svc.{{ $clusterDomain }}
