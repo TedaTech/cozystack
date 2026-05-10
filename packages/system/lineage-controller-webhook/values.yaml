@@ -1,5 +1,5 @@
 lineageControllerWebhook:
-  image: ghcr.io/cozystack/cozystack/lineage-controller-webhook:v1.2.3@sha256:f2843506673e6cd0c7e99d395d337aef93e519151e5d58d3c8fdc1df5813a8f5
+  image: ghcr.io/cozystack/cozystack/lineage-controller-webhook:v1.2.4@sha256:c71b10b6810c736d22f32f370ec80805fd58df053cdfc84a938fa1f47b4dbeda
   debug: false
   localK8sAPIEndpoint:
     enabled: true
